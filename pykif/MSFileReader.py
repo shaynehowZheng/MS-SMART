@@ -2493,12 +2493,78 @@ class MSFileReader(object):
 
 
 if __name__ == "__main__":
-    Path = 'C:\work\mass_spectrum_classifier\\test_data'
-    filePlot = '5-ZZL-Meth1-POS.raw'
-    filePath = os.path.join(Path, filePlot)
-    test = MSFileReader(filePath)
+    import os
+    import pandas as pd
+    from MSFileReader import MSFileReader
+    import numpy as np
+    import pickle
 
-    z = test.GetNumInstMethods()
-    a = test.GetInstMethod(0)
-    b = test.GetInstMethod(1)
-    b
+    # Define the base path
+    Path = r'C:\work\msclassifier\data'
+
+    # Define the Excel file path
+    excel_file = os.path.join(Path, '夏天无151个成分表-朱金凤-20250711.xlsx')
+
+    # Read the Excel file
+    try:
+        df = pd.read_excel(excel_file)
+        df = df.dropna(subset=['数据'])
+    except FileNotFoundError:
+        print(f"Error: Excel file not found at {excel_file}")
+        exit()
+
+    # Initialize a list to hold all the data to be pickled
+    all_spectra_data = []
+
+    # Iterate through each row in the DataFrame
+    for index, row in df.iterrows():
+        # Extract information from the Excel row
+        scanNum = int(row['二级图编号']) # Convert scanNum to an integer
+        fileName_excel = row['数据'] + '.raw' # Assuming '数据' column contains the raw file name without extension
+
+        filePath = os.path.join(Path, fileName_excel)
+
+        try:
+            raw_file = MSFileReader(filePath)
+        except Exception as e:
+            print(f"Error opening raw file {fileName_excel}: {e}")
+            continue
+
+        # Get label data (mass and intensity lists)
+        try:
+            label_data = raw_file.GetLabelData(scanNum)
+            if label_data and len(label_data) > 0:
+                a = label_data[0]
+                mz_values = a[0]
+                intensity_values = a[1]
+            else:
+                print(f"No label data found for scan number {scanNum} in {fileName_excel}")
+                continue
+        except Exception as e:
+            print(f"Error getting label data for scan number {scanNum} in {fileName_excel}: {e}")
+            continue
+
+        # Prepare the data dictionary for the current spectrum
+        current_spectrum_data = {
+            'peaks': {
+                'mz': np.array(mz_values, dtype=np.float32),
+                'intensities': np.array(intensity_values, dtype=np.float32)
+            },
+            'metaData': [
+                {'name': 'scanNum', 'value': scanNum},
+                {'name': 'raw filename', 'value': fileName_excel}
+            ]
+        }
+        all_spectra_data.append(current_spectrum_data)
+        print(index)
+        raw_file.Close()
+    # Define the output pickle file name for the consolidated data
+    output_pickle_file = os.path.join(Path, "all_spectra_data.pickle")
+
+    # Save all the collected data to a single pickle file
+    try:
+        with open(output_pickle_file, 'wb') as f:
+            pickle.dump(all_spectra_data, f)
+        print(f"\nSuccessfully saved all spectra data to {output_pickle_file}")
+    except Exception as e:
+        print(f"Error saving consolidated pickle file {output_pickle_file}: {e}")

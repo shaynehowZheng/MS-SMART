@@ -1,3 +1,4 @@
+import json
 import math
 import shutil
 from public_fn import drawAnnotations
@@ -533,6 +534,9 @@ class Substituent:
             data = fileplot.GetMassPrecisionEstimate(scannum)
             x = data[1]
             y = data[0]
+            self.df.loc[index, 'ref_scanNum'] = scannum
+            self.df.loc[index, 'ref_x'] = str(x)
+            self.df.loc[index, 'ref_y'] = str(y)
 
             df_mass = pd.DataFrame({'x': x, 'y': y}).sort_values(by='y', ascending=False)
             max_intensity = df_mass['y'].iloc[0]
@@ -576,7 +580,7 @@ class Substituent:
         return path_html, mass_top_list_1, mass_top_list_2
 
 
-def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=3, if_substituent=1, plot_file=0, top=5, read_ref=0):
+def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=3, if_substituent=1, plot_file=0, top=5, read_ref=0, any_ion=False, min_abundance=0, keyion=None, neutral_loss_list=None):
     """
     Processes a given LC-MS/MS file to find peaks, calculate key ion statistics, and plot mass spectra.
 
@@ -632,7 +636,11 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
     path_data = os.path.join(path, 'original_data')
     process_file_path = os.path.join(path_data, process_file)
     print(process_file)
-    energy = process_file.split('HCD')[1]
+    split_by_HCD = process_file.split('HCD')
+    if len(split_by_HCD) > 1:
+        energy = process_file.split('HCD')[1]
+    else:
+        energy = 'unknown'
     file_path = os.path.join(path_data, process_file)
     out_path = os.path.join(path, 'results', process_file)
     file_plot = False
@@ -646,17 +654,20 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
         os.makedirs(out_path)
         print(f"Directory '{process_file}' created successfully!")
 
-    df_keyion = pd.read_csv(f'{path}/results/common_ions_ppm3=5.csv')
-    df_keyion = df_keyion[df_keyion['energy'] == int(energy)]
-    if len(df_keyion) == 0:
-        print('No common ions found for this energy level.')
-        return 
-    df_keyion = df_keyion[df_keyion['rel_abundance_rank'] <= top]
-    keyion = df_keyion['m/z'].tolist()
-    keyion_theory = cal_theoretical_mz(keyion)
-
+    if len(keyion)==0:
+        df_keyion = pd.read_csv(f'{path}/results/common_ions_ppm3=5.csv')
+        df_keyion = df_keyion[df_keyion['energy'] == int(energy)]
+        if len(df_keyion) == 0:
+            print('No common ions found for this energy level.')
+            return 
+        df_keyion = df_keyion[df_keyion['rel_abundance_rank'] <= top]
+        keyion = df_keyion['m/z'].tolist()
+        keyion_theory = cal_theoretical_mz(keyion)
+    else:
+        keyion_theory = keyion
     # KIF
-    df_f_all, df_raw, chro_data, df_ms2, df_ms2_kif = keyion_processor(process_file_path, keyion_theory, ppm4=ppm4, ppm5=ppm5, ppm6=ppm6, integrate=integrate)
+    df_f_all, df_raw, chro_data, df_ms2, df_ms2_kif = keyion_processor(process_file_path, keyion_theory, ppm4=ppm4, ppm5=ppm5,
+                                                    ppm6=ppm6, integrate=integrate, min_abundance=min_abundance, any_ion=any_ion, neutral_loss_list=neutral_loss_list)
 
     # df_ms2.to_csv(f'{out_path}/df_ms2.csv', encoding='utf_8_sig', index=False)
     # df_ms2_kif.to_csv(f'{out_path}/df_ms2_kif_ppm4={ppm4}_top{top}.csv', encoding='utf_8_sig', index=False)
@@ -702,7 +713,9 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
         x_min = 0
     
     fig = scatter_group(out_path, df_raw, chro_data, x_min=x_min, showlegend=True, add_annotation=1)
-    # fig.write_image(f'{out_path}\ppm4={ppm4}_kif_{integrate}_fitting.svg')
+    print(1)
+    fig.write_image(f'{out_path}\ppm4={ppm4}_kif_{integrate}_fitting.png', scale=3, width=3000, height=3394)
+    print(2)
     df_substituent = pd.read_excel('{}\substituents.xlsx'.format(path_data), sheet_name='substituents', index_col=False)
     df_mother = pd.read_excel('{}\substituents.xlsx'.format(path_data), sheet_name='core', index_col=False)
     s = Substituent(file_path, out_path, df_raw, df_substituent, df_mother, 5, 1, path, ppm4, file_plot)
@@ -774,7 +787,6 @@ if __name__ == "__main__":
     for params in config.split():
         item = params.split('=')
         dbcondict[item[0]] = item[1]
-    
     find_peaks_substituent_plot(process_file=dbcondict['process_file'], 
                                 ppm4=int(dbcondict['ppm4']), 
                                 ppm5=int(dbcondict['ppm5']), 
@@ -782,4 +794,8 @@ if __name__ == "__main__":
                                 integrate=int(dbcondict['integrate']), 
                                 if_substituent=int(dbcondict['if_substituent']), 
                                 plot_file=dbcondict['plot_file'], 
-                                top=int(dbcondict['top']))
+                                top=int(dbcondict['top']),
+                                any_ion=dbcondict['any_ion']=='True',
+                                min_abundance=float(dbcondict['min_abundance']),
+                                keyion=json.loads(dbcondict['keyion']),
+                                neutral_loss_list=json.loads(dbcondict['neutral_loss_list']),)  

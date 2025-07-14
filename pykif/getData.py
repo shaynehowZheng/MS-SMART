@@ -25,29 +25,90 @@ sys.path.append('..')
 sys.path.extend([os.path.join(root, name) for root, dirs, _ in os.walk("../") for name in dirs])
 
 
-def keyionfilter(raw_file, key_ion, scan_num, mass_tolerance):
+def keyionfilter(
+    raw_file, key_ion_list, scan_num, mass_tolerance, min_abundance=0, any_ion=False,
+    neutral_loss_list=None
+):
     massarray = np.array(raw_file.GetLabelData(scan_num)[0][0])
-    massarray = massarray[(massarray > (min(key_ion) - 0.5)) & (massarray < (max(key_ion) + 0.5))]
+    intensity = np.array(raw_file.GetLabelData(scan_num)[0][1])
+
     if len(massarray) == 0:
-        return False, 0, 0
+        return False, 0, 0, 0
+
+    total_intensity = max(intensity)
+    rel_abundance = intensity / total_intensity * 100
+
+    # --- Original Key Ion Filtering ---
+    # Filter massarray and rel_abundance for values within a broader range of key_ion for initial processing
+    # This helps in reducing the array size before precise matching
+    filtered_indices = (massarray > (min(key_ion_list) - 0.5)) & (massarray < (max(key_ion_list) + 0.5))
+    filtered_massarray = massarray[filtered_indices]
+    filtered_rel_abundance = rel_abundance[filtered_indices]
+
     num = 0
     delta_list = []
     keyion_observe_list = []
-    for ion in key_ion:
-        deltaarray = abs((massarray - ion) / ion * 1e6)
-        min_index = np.argmin(deltaarray)
-        keyion_observe = massarray[min_index]
-        delta = round(deltaarray[min_index], 2)
-        if delta < mass_tolerance:
-            delta_list.append(delta)
-            keyion_observe_list.append(round(keyion_observe, 5))
-            num += 1
-    if num == len(key_ion):
-        return True, keyion_observe_list, delta_list
-    else:
-        return False, 0, 0
+    rel_abundance_list = []
+    if len(filtered_massarray) > 0: # Only proceed if there are ions in the filtered range
+        for ion in key_ion_list:
+            deltaarray = abs((filtered_massarray - ion) / ion * 1e6)
+            min_index = np.argmin(deltaarray)
+            keyion_observe = filtered_massarray[min_index]
+            rel_abun = filtered_rel_abundance[min_index]
+            delta = round(deltaarray[min_index], 2)
 
+            if delta < mass_tolerance and rel_abun >= min_abundance:
+                delta_list.append(delta)
+                keyion_observe_list.append(round(keyion_observe, 5))
+                rel_abundance_list.append(round(rel_abun, 5))
+                num += 1
 
+        judge = (num > 0) if any_ion else (num == len(key_ion_list))
+
+        if judge:
+            print('AA')
+            return True, keyion_observe_list, delta_list, rel_abundance_list
+
+    # --- Neutral Loss Filtering (if original conditions not met) ---
+    if neutral_loss_list is not None:
+
+        # Get indices of the top 5 most abundant ions
+        sorted_indices = np.argsort(intensity)[::-1]  # Sort in descending order
+        top_5_indices = sorted_indices[:min(5, len(intensity))] # Take up to 5, or fewer if less than 5 ions
+
+        top_5_masses = massarray[top_5_indices]
+        top_5_intensities = intensity[top_5_indices]
+        top_5_rel_abundances = rel_abundance[top_5_indices]
+
+        neutral_loss_observed_pairs_mz = []
+        neutral_loss_deltas = []
+        neutral_loss_observed_pairs_rel_abun = []
+
+        # Check all pairs for neutral loss
+        for i in range(len(top_5_masses)):
+            for j in range(i + 1, len(top_5_masses)):
+                mz1 = top_5_masses[i]
+                mz2 = top_5_masses[j]
+                rel_abun1 = top_5_rel_abundances[i]
+                rel_abun2 = top_5_rel_abundances[j]
+
+                observed_neutral_loss = abs(mz1 - mz2)
+
+                for expected_nl_mass in neutral_loss_list:
+                    delta_nl = abs((observed_neutral_loss - expected_nl_mass) / expected_nl_mass * 1e6)
+
+                    if delta_nl < mass_tolerance:
+                        neutral_loss_observed_pairs_mz.append((round(mz1, 5), round(mz2, 5)))
+                        neutral_loss_deltas.append(round(delta_nl, 2))
+                        neutral_loss_observed_pairs_rel_abun.append((round(rel_abun1, 5), round(rel_abun2, 5)))
+                        # If we find any neutral loss that matches, we can return True
+                        # You might want to adjust this logic if you need to find ALL specified neutral losses
+                        # For now, if at least one pair satisfies any neutral loss, it returns True
+                        print('BB')
+                        return True, neutral_loss_observed_pairs_mz, neutral_loss_deltas, neutral_loss_observed_pairs_rel_abun
+
+    # If neither condition is met
+    return False, 0, 0, 0
 def getprecursor_prescannum(rawfile, scan_num):
     precursor = rawfile.GetFullMSOrderPrecursorDataFromScanNum(scan_num, rawfile.GetMSOrderForScanNum(scan_num) - 2)[0]
     for i in range(scan_num - 1, scan_num - 4, -1):
@@ -57,19 +118,18 @@ def getprecursor_prescannum(rawfile, scan_num):
     return pd.Series([pre_scan_num, precursor])
 
 
-def initdata(rawfile, keyion, mass_tolerance):
+def initdata(rawfile, keyion, mass_tolerance, min_abundance=0, any_ion=False, neutral_loss_list=None):
     df_ms2 = pd.DataFrame(list(range(rawfile.FirstSpectrumNumber, rawfile.LastSpectrumNumber + 1)), columns=['scanNum'])
     df_ms2['msOrder'] = df_ms2.apply(lambda x: rawfile.GetMSOrderForScanNum(x), axis=1)
     print('num of MS1 spectra:', len(df_ms2[df_ms2['msOrder'] == 1]))
     df_ms2 = df_ms2[df_ms2['msOrder'] == 2]
     print('num of MS2 spectra:', len(df_ms2))
-    res = df_ms2.apply(lambda x: keyionfilter(rawfile, keyion, x.scanNum, mass_tolerance), axis=1)
-    res = res.apply(lambda x: pd.Series([x[0], x[1], x[2]]))
-    res = res.rename(columns={0: 'keyfilter', 1: 'keyion_observe', 2: 'delta'})
-    df_ms2[['keyfilter', 'keyion_observe', 'delta']] = res
+    res = df_ms2.apply(lambda x: keyionfilter(rawfile, keyion, x.scanNum, mass_tolerance, min_abundance=min_abundance, any_ion=any_ion, neutral_loss_list=neutral_loss_list), axis=1)
+    res = res.apply(lambda x: pd.Series([x[0], x[1], x[2], x[3]]))
+    res = res.rename(columns={0: 'keyfilter', 1: 'keyion_observe', 2: 'delta', 3:'rel_abundance'})
+    df_ms2[['keyfilter', 'keyion_observe', 'delta', 'rel_abundance']] = res
     df_ms2[['preScanNum', 'precursor']] = df_ms2.apply(lambda x: getprecursor_prescannum(rawfile, x.scanNum), axis=1)
     df_ms2['keyion'] = str(keyion)
-    a = rawfile.GetScanHeaderInfoForScanNum(df_ms2['scanNum'].iloc[0])
     df_ms2['TIC'] = df_ms2['scanNum'].apply(lambda x: rawfile.GetScanHeaderInfoForScanNum(x)['TIC'])
     df_ms2['StartTime'] = df_ms2['scanNum'].apply(lambda x: rawfile.GetScanHeaderInfoForScanNum(x)['StartTime'])
     df_ms2_all = df_ms2
@@ -556,8 +616,10 @@ def scatter_group(out_path, data, chro_data, add_annotation=0, x_min=0, x_max=0,
             )
         ), row=1, col=1
     )
-    fig.update_yaxes(tickfont={'size': tickfont_size}, linewidth=axis_width, title_text=f'Intensity / 1e{exponent}',
-                     titlefont={"size": title_size}, row=1, nticks=3)
+    fig.update_yaxes(tickfont={'size': tickfont_size}, linewidth=axis_width, title={
+        'text': f'Intensity / 1e{exponent}',
+        'font': {'size': title_size}
+    }, row=1, nticks=3)
 
     for row in range(2, plot_rows + 1):
         df_plot = data[data['row'] == row]
@@ -583,8 +645,10 @@ def scatter_group(out_path, data, chro_data, add_annotation=0, x_min=0, x_max=0,
                                 arrowsize=line_width, arrowwidth=line_width, xref='x', yref='y',
                                 font={'size': tickfont_size}, row=row, col=1)
                 
-        fig.update_yaxes(tickfont={'size': tickfont_size}, linewidth=axis_width, title_text=f'Intensity / 1e{exponent}',
-                         titlefont={"size": title_size}, title_standoff=30, row=row, nticks=3)
+        fig.update_yaxes(tickfont={'size': tickfont_size}, linewidth=axis_width,     title={
+                'text': f'Intensity / 1e{exponent}',
+                'font': {'size': title_size}
+            },title_standoff=30, row=row, nticks=3)
     data.loc[index, 'row'] = row
 
     # 
@@ -601,8 +665,10 @@ def scatter_group(out_path, data, chro_data, add_annotation=0, x_min=0, x_max=0,
 
     for row in range(1, plot_rows + 1):
         if row == plot_rows:
-            fig.update_xaxes(tickfont={'size': tickfont_size}, title_text='time(min)', titlefont={"size": title_size},
-                             row=row, col=1)
+            fig.update_xaxes(tickfont={'size': tickfont_size},     title={
+                'text': f'time(min)',
+                'font': {'size': title_size}
+            },row=row, col=1)
         else:
             fig.update_xaxes(tickfont={'size': tickfont_size}, title_text="", visible=True, row=row, col=1)
         # if row >= 9:
@@ -910,12 +976,12 @@ def drop_near_precursor(df, ppm6):
     df_result = df_result.drop(columns='diff')  
     return df_result
 
-def drop_even_precursor(df_ms2_kif):
+def drop_odd_precursor(df_ms2_kif):
     df_ms2_kif.loc[:, 'precursor_int'] = df_ms2_kif['precursor'].apply(lambda x: math.floor(x))
     df_ms2_kif = df_ms2_kif[df_ms2_kif['precursor_int'] % 2 == 0]
     return df_ms2_kif  
 
-def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, integrate=3):
+def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, integrate=3, min_abundance=0, any_ion=False, neutral_loss_list=None):
     file = r'{}.raw'.format(file_name)
     rawfile = MSFileReader(file)
 
@@ -923,9 +989,9 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
                                     smoothingType=2, smoothingValue=15)
     chro_df = pd.DataFrame({'x': chro_data[0][0], 'y': chro_data[0][1]})
 
-    df_ms2, df_ms2_kif = initdata(rawfile, keyion, ppm4)
-    df_ms2_kif = drop_even_precursor(df_ms2_kif)
-    print(f'{datetime.datetime.now()}: finished KIF')
+    df_ms2, df_ms2_kif = initdata(rawfile, keyion, ppm4, min_abundance=min_abundance, any_ion=any_ion, neutral_loss_list=neutral_loss_list)
+    df_ms2_kif = drop_odd_precursor(df_ms2_kif)
+    print(f'{datetime.datetime.now()}: finished KIF with {len(df_ms2_kif)} spectra')
     
     df_f_all = drop_near_precursor(df_ms2, ppm6)
     df_f_all['x'] = ''
@@ -1004,7 +1070,7 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
             'area': area, 'height': height, 'width': width,
             'dheight_left': dheight_left, 'dheight_left(%)': dheight_left_percent,
             'dheight_right': dheight_right, 'dheight_right(%)': dheight_right_percent,
-            'delta': row['delta'], 'keyion': row['keyion'], 'keyion_observe': row['keyion_observe']}])
+            'delta': row['delta'], 'keyion': row['keyion'], 'keyion_observe': row['keyion_observe'], 'rel_abundance': row['rel_abundance']}])
         df_fig = pd.concat([df_fig, df_temp])
     print(f'{datetime.datetime.now()}: finished ')
     

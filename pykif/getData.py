@@ -70,7 +70,7 @@ def keyionfilter(
             return True, keyion_observe_list, delta_list, rel_abundance_list
 
     # --- Neutral Loss Filtering (if original conditions not met) ---
-    if neutral_loss_list is not None:
+    if len(neutral_loss_list) > 0:
 
         # Get indices of the top 5 most abundant ions
         sorted_indices = np.argsort(intensity)[::-1]  # Sort in descending order
@@ -873,6 +873,9 @@ def fitting_the_curve(df_f, rawfile, fitting=1):
                     df_f.at[index, 'x'] = np.array(x)
                     df_f.at[index, 'y'] = np.array(y)
                     continue
+            # 1. 计算拟合值
+            y_fit = gaussian_func(selected_x, mu, sigma, a)
+
             interpolated_x = []
             if selected == 'left':
                 start_value = selected_x[0] - extend_length * 0.01
@@ -927,6 +930,11 @@ def fitting_the_curve(df_f, rawfile, fitting=1):
                 new_y = np.concatenate((selected_y, outerpolated_y))
 
             df_f.at[index, 'fitting'] = 1
+            # 2. 计算 R^2
+            ss_residual = np.sum((selected_y - y_fit)**2)
+            ss_total = np.sum((selected_y - np.mean(selected_y))**2)
+            R_squared = 1 - (ss_residual / ss_total) if ss_total != 0 else np.nan
+            df_f.at[index, 'R2'] = R_squared
             symmetric_y = interpolated_y[::-1]  
             if selected == 'left':
                 mid = interpolated_x[-1]

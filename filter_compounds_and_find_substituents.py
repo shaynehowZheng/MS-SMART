@@ -580,7 +580,7 @@ class Substituent:
         return path_html, mass_top_list_1, mass_top_list_2
 
 
-def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=3, if_substituent=1, plot_file=0, top=5, read_ref=0, any_ion=False, min_abundance=0, keyion=None, neutral_loss_list=None):
+def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=3, if_substituent=1, plot_file=0, top=5, read_ref=0, any_ion=False, min_abundance=0, keyion=None, neutral_loss_list=None, time_delta_threshold=0):
     """
     Processes a given LC-MS/MS file to find peaks, calculate key ion statistics, and plot mass spectra.
 
@@ -632,6 +632,7 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
     --------
     >>> count_information = find_peaks_substituent_plot('sample_data_file', ppm4=10, integrate=2, if_substituent=0)
     """
+
     path = os.getcwd()
     path_data = os.path.join(path, 'original_data')
     process_file_path = os.path.join(path_data, process_file)
@@ -667,7 +668,8 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
         keyion_theory = keyion
     # KIF
     df_f_all, df_raw, chro_data, df_ms2, df_ms2_kif = keyion_processor(process_file_path, keyion_theory, ppm4=ppm4, ppm5=ppm5,
-                                                    ppm6=ppm6, integrate=integrate, min_abundance=min_abundance, any_ion=any_ion, neutral_loss_list=neutral_loss_list)
+                                                    ppm6=ppm6, integrate=integrate, min_abundance=min_abundance, any_ion=any_ion, neutral_loss_list=neutral_loss_list,
+                                                    time_delta_threshold=time_delta_threshold)
 
     # df_ms2.to_csv(f'{out_path}/df_ms2.csv', encoding='utf_8_sig', index=False)
     # df_ms2_kif.to_csv(f'{out_path}/df_ms2_kif_ppm4={ppm4}_top{top}.csv', encoding='utf_8_sig', index=False)
@@ -730,7 +732,7 @@ def find_peaks_substituent_plot(process_file, ppm4=5, ppm5=5, ppm6=5, integrate=
     
     s.df.to_csv(f'{out_path}\peaks_energy={energy}_ppm4={ppm4}_ppm5={ppm5}_ppm6={ppm6}_top={top}.csv', encoding='utf_8_sig',
                 index=False)
-    print(f'{datetime.datetime.now()}: finished task %s' % (os.getpid()))
+    print(f'{datetime.datetime.now()}: finished all tasks %s' % (os.getpid()))
     return count_info
 
 def cal_theoretical_mz(keyion_observed):
@@ -779,6 +781,7 @@ def cal_theoretical_mz(keyion_observed):
                 break
     return keyion_theory
 
+
 if __name__ == "__main__":
     f = open('filter_compounds_and_find_substituents.conf', 'r')  
     config = f.read()
@@ -798,4 +801,5 @@ if __name__ == "__main__":
                                 any_ion=dbcondict['any_ion']=='True',
                                 min_abundance=float(dbcondict['min_abundance']),
                                 keyion=json.loads(dbcondict['keyion']),
-                                neutral_loss_list=json.loads(dbcondict['neutral_loss_list']),)  
+                                neutral_loss_list=json.loads(dbcondict['neutral_loss_list']),
+                                time_delta_threshold=float(dbcondict['time_delta_threshold'])) 

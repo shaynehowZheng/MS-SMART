@@ -66,7 +66,6 @@ def keyionfilter(
         judge = (num > 0) if any_ion else (num == len(key_ion_list))
 
         if judge:
-            print('AA')
             return True, keyion_observe_list, delta_list, rel_abundance_list
 
     # --- Neutral Loss Filtering (if original conditions not met) ---
@@ -989,7 +988,7 @@ def drop_odd_precursor(df_ms2_kif):
     df_ms2_kif = df_ms2_kif[df_ms2_kif['precursor_int'] % 2 == 0]
     return df_ms2_kif  
 
-def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, integrate=3, min_abundance=0, any_ion=False, neutral_loss_list=None):
+def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, integrate=3, min_abundance=0, any_ion=False, neutral_loss_list=None, time_delta_threshold=0):
     file = r'{}.raw'.format(file_name)
     rawfile = MSFileReader(file)
 
@@ -1026,7 +1025,7 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
         rawdata = list(chordata[0][1])
         timeInterval = round((rawfile.EndTime - rawfile.StartTime) * 60 / rawfile.LastSpectrumNumber, 1)
         TimeData = np.asarray(timedata) * 60
-        # if round(row['precursor'], 5) == 352.15439:
+        # if round(row['precursor'], 5) in [816.57745]:
         #     plt.plot(timedata, rawdata)
         #     plt.show()
         err, curr = Ti.getTradPreResult(rawdata, timedata, timeInterval, 0, -1, 5, integrate)
@@ -1037,7 +1036,7 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
                 peakstart = timedata[peak['StartIdx']]
                 peaktop = timedata[peak['ApexIdx']]
                 peakend = timedata[peak['EndIdx']]
-                # if round(row['precursor'], 5) == 352.11734:
+                # if round(row['precursor'], 5) in [816.57745]:
                 #    x = timedata[peak['StartIdx']:peak['EndIdx']]
                 #    y = rawdata[peak['StartIdx']:peak['EndIdx']]
                 #    plt.plot(x, y)
@@ -1046,8 +1045,7 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
                     startTime = peakstart
                     rt = peaktop
                     endTime = peakend
-                    area = peak['Area']
-    
+                    area = peak['Area']                  
                     height = peak['Height']
                     raw_w = rawdata[peak['StartIdx']:peak['EndIdx']]
                     raw_w = list(filter(lambda x: x > 0, raw_w))
@@ -1059,33 +1057,35 @@ def keyion_processor(file_name, keyion, ppm4, ppm5=5, ppm6=5, if_fitting=1, inte
                     dheight_left = y0 - y1
                     dheight_right = y0 - y2
                     break
-    
             if flag:
                 break
     
-        # plt.scatter(timedata, rawdata)
-        # plt.show()
-        # time_s = timedata[peak['StartIdx']:peak['EndIdx']]
-        # raw_s = rawdata[peak['StartIdx']:peak['EndIdx']]
-        # plt.scatter(time_s, raw_s)
-        # plt.show()
+        # if round(row['precursor'], 5) in [816.57745]:
+        #     time_s = timedata[peak['StartIdx']:peak['EndIdx']]
+        #     raw_s = rawdata[peak['StartIdx']:peak['EndIdx']]
+        #     plt.scatter(time_s, raw_s)
+        #     plt.show()
+
         dheight_left_percent = 0 if height == 0 else round(dheight_left / height * 100, 1)
         dheight_right_percent = 0 if height == 0 else round(dheight_right / height * 100, 1)
-        df_temp = pd.DataFrame([{
-            'scanNum': row['scanNum'], 'TIC': row['TIC'],
-            'startTime': startTime, 'RT': rt, 'endTime': endTime, 'timedata': timedata,
-            'precursor': round(row['precursor'], 5), 'precursorsection': precursorsection,
-            'area': area, 'height': height, 'width': width,
-            'dheight_left': dheight_left, 'dheight_left(%)': dheight_left_percent,
-            'dheight_right': dheight_right, 'dheight_right(%)': dheight_right_percent,
-            'delta': row['delta'], 'keyion': row['keyion'], 'keyion_observe': row['keyion_observe'], 'rel_abundance': row['rel_abundance']}])
-        df_fig = pd.concat([df_fig, df_temp])
-    print(f'{datetime.datetime.now()}: finished ')
+        if abs(row['StartTime'] - rt) > time_delta_threshold:  # threshold 是你的float参数
+            print(f"峰rt与二级时间相差超过{time_delta_threshold} - scanNum: {row['scanNum']}, precursor: {row['precursor']}, StartTime: {row['StartTime']}, RT: {rt}")
+        else:
+            df_temp = pd.DataFrame([{
+                'scanNum': row['scanNum'], 'TIC': row['TIC'],
+                'startTime': startTime, 'RT': rt, 'endTime': endTime, 'timedata': timedata,
+                'precursor': round(row['precursor'], 5), 'precursorsection': precursorsection,
+                'area': area, 'height': height, 'width': width,
+                'dheight_left': dheight_left, 'dheight_left(%)': dheight_left_percent,
+                'dheight_right': dheight_right, 'dheight_right(%)': dheight_right_percent,
+                'delta': row['delta'], 'keyion': row['keyion'], 'keyion_observe': row['keyion_observe'], 'rel_abundance': row['rel_abundance']}])
+            df_fig = pd.concat([df_fig, df_temp])
+    print(f'{datetime.datetime.now()}: finished 积分和切割')
     
     df_fig.sort_values(by=['precursor'], ascending=[True], inplace=True)
     df_fig = df_fig.reset_index(drop=True)
     df_f = drop_near_rows(df_fig, ppm6)
-    print(f'{datetime.datetime.now()}: finished ')
+    print(f'{datetime.datetime.now()}: finished 谱图合并')
     
     df_f[['x', 'y', 'fitting']] = None
     df_f = fitting_the_curve(df_f, rawfile, if_fitting)
